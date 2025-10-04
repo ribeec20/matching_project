@@ -31,7 +31,7 @@ def get_api_submissions(anda_objects: List) -> Dict[str, Optional[str]]:
         Dictionary mapping ANDA number to PDF URL (or None if not found)
     """
     api_client = DrugsAPI()
-    return api_client.get_multiple_anda_pdfs(anda_objects, rate_limit_delay=0.0)  # No rate limiting
+    return api_client.get_multiple_anda_pdfs(anda_objects, rate_limit_delay=0.5)
 
 
 def get_nda_companies_from_orange_book(nda_numbers: List[str], orange_book_clean: pd.DataFrame) -> Dict[str, List[str]]:
@@ -348,7 +348,7 @@ def validate_company_matches(
     
     # DEBUG: Check what columns are in the validated matches
     if not validated_df.empty:
-        print(f"\n🔍 DEBUG: Validated matches columns: {validated_df.columns.tolist()}")
+        print(f"\n[DEBUG] Validated matches columns: {validated_df.columns.tolist()}")
         print(f"   Has ANDA_Approval_Date_Date: {'ANDA_Approval_Date_Date' in validated_df.columns}")
         if 'ANDA_Approval_Date_Date' in validated_df.columns:
             print(f"   Sample ANDA dates: {validated_df['ANDA_Approval_Date_Date'].head(3).tolist()}")
@@ -427,7 +427,7 @@ def nda_anda_company_validation(
     logger.info("Validating NDA-ANDA matches based on company references...")
     
     # DEBUG: Check input to validation
-    print(f"\n🔍 DEBUG: Input to validate_company_matches:")
+    print(f"\n[DEBUG] Input to validate_company_matches:")
     print(f"   anda_matches_to_process columns: {anda_matches_to_process.columns.tolist()}")
     print(f"   Has ANDA_Approval_Date_Date: {'ANDA_Approval_Date_Date' in anda_matches_to_process.columns}")
     
@@ -646,7 +646,7 @@ def calculate_nda_monopoly_times_with_validation(
     nda_monopoly["Actual_Monopoly_Years"] = nda_monopoly["Actual_Monopoly_Days"] / 365.25
     
     # DEBUG: Print sample calculations
-    print("\n🔍 DEBUG: Monopoly time calculations (first 5 NDAs with matches):")
+    print("\n[DEBUG] Monopoly time calculations (first 5 NDAs with matches):")
     debug_cols = ['NDA_Appl_No', 'NDA_Approval_Date_Date', 'Earliest_ANDA_Date', 
                   'Actual_Monopoly_Days', 'Actual_Monopoly_Years', 'NDA_MMT_Years']
     available_debug_cols = [col for col in debug_cols if col in nda_monopoly.columns]

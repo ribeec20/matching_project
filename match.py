@@ -240,20 +240,31 @@ def _consolidate_study_nda_data(study_ndas_strength: pd.DataFrame) -> pd.DataFra
         }
     )
 
-    # Reorganize columns for clarity
+    # Reorganize columns for clarity - only include columns that exist
+    # Required columns from Orange Book merge
     columns_front = [
         "Appl_No",
         "Ingredient",
         "Approval_Date",
         "DF",
         "Route",
-        "Product_Count",
-        "Strength_Count",
         "Strength_List",
         "Strength_Specific",
+    ]
+    
+    # Optional columns from main table (may not exist in 2025 data source)
+    optional_columns = [
+        "Product_Count",
+        "Strength_Count",
         "MMT",
         "MMT_Years",
     ]
+    
+    # Add optional columns if they exist
+    for col in optional_columns:
+        if col in sdf.columns:
+            columns_front.append(col)
+    
     remaining_cols = [col for col in sdf.columns if col not in columns_front]
     study_ndas_final = sdf[columns_front + remaining_cols].copy()
 
@@ -346,16 +357,20 @@ def _filter_final_matches(candidates: pd.DataFrame) -> pd.DataFrame:
 
 def _create_nda_summary(study_ndas_final: pd.DataFrame) -> pd.DataFrame:
     """Create basic NDA summary for further processing."""
+    # Required columns
+    summary_cols = [
+        "NDA_Appl_No",
+        "NDA_Approval_Date",
+        "NDA_Ingredient",
+        "NDA_Applicant",
+    ]
+    
+    # Optional columns (may not exist in 2025 data)
+    if "NDA_MMT_Years" in study_ndas_final.columns:
+        summary_cols.insert(2, "NDA_MMT_Years")
+    
     nda_summary = (
-        study_ndas_final[
-            [
-                "NDA_Appl_No",
-                "NDA_Approval_Date",
-                "NDA_MMT_Years",
-                "NDA_Ingredient",
-                "NDA_Applicant",
-            ]
-        ]
+        study_ndas_final[summary_cols]
         .drop_duplicates(subset=["NDA_Appl_No"])
         .copy()
     )

@@ -54,6 +54,16 @@ def plot_monopoly_scatter(nda_monopoly_times: pd.DataFrame, show: bool = True) -
     print(f"\n✓ Filtered to {len(matched_data)} NDAs with monopoly times")
     print(f"  Actual_Monopoly_Years range: {matched_data['Actual_Monopoly_Years'].min():.2f} to {matched_data['Actual_Monopoly_Years'].max():.2f}")
     print(f"  NDA_MMT_Years range: {matched_data['NDA_MMT_Years'].min():.2f} to {matched_data['NDA_MMT_Years'].max():.2f}")
+    
+    # DEBUG: Check NDA 21513 specifically
+    if 21513 in matched_data['NDA_Appl_No'].values:
+        nda_21513 = matched_data[matched_data['NDA_Appl_No'] == 21513]
+        print(f"\n🔍 DEBUG: NDA 21513 values:")
+        print(f"  Actual_Monopoly_Years: {nda_21513['Actual_Monopoly_Years'].values[0]}")
+        print(f"  NDA_MMT_Years: {nda_21513['NDA_MMT_Years'].values[0]}")
+        if 'Actual_Monopoly_Days' in nda_21513.columns:
+            print(f"  Actual_Monopoly_Days: {nda_21513['Actual_Monopoly_Days'].values[0]}")
+    
     print()
     
     # Create detailed text with company information (limited to first 6 ANDA matches)
@@ -78,6 +88,23 @@ def plot_monopoly_scatter(nda_monopoly_times: pd.DataFrame, show: bool = True) -
         else "Longer than granted", 
         axis=1
     )
+    
+    # DEBUG: Verify data integrity before plotting
+    print("\n🔍 DEBUG: Pre-plot data verification:")
+    print(f"  DataFrame shape: {matched_data.shape}")
+    print(f"  Columns used for plotting: {['NDA_MMT_Years', 'Actual_Monopoly_Years']}")
+    
+    # Check for NaN values
+    nan_x = matched_data['NDA_MMT_Years'].isna().sum()
+    nan_y = matched_data['Actual_Monopoly_Years'].isna().sum()
+    print(f"  NaN in X (NDA_MMT_Years): {nan_x}")
+    print(f"  NaN in Y (Actual_Monopoly_Years): {nan_y}")
+    
+    # Sample 5 random rows to verify data
+    print(f"\n  Sample of 5 random rows:")
+    sample_cols = ['NDA_Appl_No', 'NDA_MMT_Years', 'Actual_Monopoly_Years']
+    print(matched_data[sample_cols].sample(min(5, len(matched_data))).to_string(index=False))
+    print()
     
     # Create the interactive scatter plot - we'll use hover but with enhanced details
     fig = px.scatter(

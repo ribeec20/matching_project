@@ -21,15 +21,17 @@ BASE_URL = "https://api.fda.gov/drug"
 class DrugsAPI:
     """Client for FDA Drugs@FDA API to retrieve ANDA application data."""
     
-    def __init__(self, api_key: str = API_KEY, base_url: str = BASE_URL):
+    def __init__(self, api_key: str = API_KEY, base_url: str = BASE_URL, rate_limit_delay: float = 0.5):
         """Initialize the FDA API client.
         
         Args:
             api_key: FDA API key for authentication
             base_url: Base URL for the FDA drug API
+            rate_limit_delay: Delay in seconds between API requests (default: 0.5)
         """
         self.api_key = api_key
         self.base_url = base_url
+        self.rate_limit_delay = rate_limit_delay
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -55,6 +57,10 @@ class DrugsAPI:
         try:
             response = self.session.get(url, params=params, timeout=30)
             response.raise_for_status()
+            
+            # Add rate limiting after successful request
+            time.sleep(self.rate_limit_delay)
+            
             return response.json()
         except requests.exceptions.RequestException as e:
             logger.debug(f"API request failed for {application_number}: {str(e)}")
@@ -132,19 +138,23 @@ class DrugsAPI:
         logger.debug(f"✗ No approval letter PDF found in API for ANDA {anda_number}")
         return None
     
-    def get_multiple_anda_pdfs(self, anda_objects: List, rate_limit_delay: float = 0.0) -> Dict[str, Optional[str]]:
+    def get_multiple_anda_pdfs(self, anda_objects: List, rate_limit_delay: float = None) -> Dict[str, Optional[str]]:
         """Get PDF URLs for multiple ANDA applications.
         
         Args:
             anda_objects: List of objects with get_anda_number() method
-            rate_limit_delay: Delay in seconds between API requests (default: 0.0 = no delay)
+            rate_limit_delay: Delay in seconds between API requests (overrides instance default if provided)
             
         Returns:
             Dictionary mapping ANDA number to PDF URL (or None if not found)
         """
+        # Use provided delay or fall back to instance default
+        delay = rate_limit_delay if rate_limit_delay is not None else self.rate_limit_delay
+        
         pdf_urls = {}
         
         logger.info(f"Querying FDA API for {len(anda_objects)} ANDA applications...")
+        logger.info(f"Rate limit delay: {delay} seconds between requests")
         
         for i, anda in enumerate(anda_objects, 1):
             anda_number = anda.get_anda_number()
@@ -153,9 +163,8 @@ class DrugsAPI:
                 pdf_url = self.get_anda_approval_letter_url(anda_number)
                 pdf_urls[anda_number] = pdf_url
                 
-                # Rate limiting (disabled by default)
-                if rate_limit_delay > 0 and i < len(anda_objects):
-                    time.sleep(rate_limit_delay)
+                # Note: get_anda_approval_letter_url already includes rate limiting
+                # via search_application, so we don't need additional delay here
                     
             except Exception as e:
                 logger.error(f"Error processing ANDA {anda_number}: {str(e)}")
@@ -187,6 +196,10 @@ class DrugsAPI:
         try:
             response = self.session.get(url, params=params, timeout=30)
             response.raise_for_status()
+            
+            # Add rate limiting after successful request
+            time.sleep(self.rate_limit_delay)
+            
             return response.json()
         except requests.exceptions.RequestException as e:
             logger.error(f"API wildcard search failed: {str(e)}")
