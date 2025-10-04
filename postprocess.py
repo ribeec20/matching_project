@@ -10,11 +10,28 @@ import numpy as np
 import pandas as pd
 
 from match import MatchData
-from extract_from_pdf import FDAApprovalLetterExtractor
+from extract_from_pdf import BatchPDFExtractor
+from drugs_api import DrugsAPI
 
 # Set up logging for the validation process
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def get_api_submissions(anda_objects: List) -> Dict[str, Optional[str]]:
+    """Get PDF URLs for ANDA approval letters from FDA API.
+    
+    This function queries the FDA API to find approval letter PDFs for ANDA applications.
+    It uses the DrugsAPI class to handle all API interactions.
+    
+    Args:
+        anda_objects: List of ANDA objects with get_anda_number() method
+        
+    Returns:
+        Dictionary mapping ANDA number to PDF URL (or None if not found)
+    """
+    api_client = DrugsAPI()
+    return api_client.get_multiple_anda_pdfs(anda_objects, rate_limit_delay=0.0)  # No rate limiting
 
 
 def get_nda_companies_from_orange_book(nda_numbers: List[str], orange_book_clean: pd.DataFrame) -> Dict[str, List[str]]:
@@ -184,37 +201,8 @@ def extract_company_references_from_pdfs(anda_pdf_urls: Dict[str, str]) -> Dict[
     Returns:
         Dictionary mapping ANDA number to extracted company reference text
     """
-    extractor = FDAApprovalLetterExtractor()
-    company_references = {}
-    
-    for anda_num, pdf_url in anda_pdf_urls.items():
-        logger.info(f"Processing ANDA {anda_num}: {pdf_url}")
-        
-        try:
-            # Extract the bioequivalence determination sentence
-            pdf_text = extractor.parse_pdf_from_url(pdf_url)
-            
-            if pdf_text:
-                # Use our improved extraction function
-                company_ref_text = extractor.extract_reference_company(pdf_text)
-                company_references[anda_num] = company_ref_text
-                
-                if company_ref_text:
-                    logger.info(f"Successfully extracted reference text for ANDA {anda_num}")
-                else:
-                    logger.warning(f"No company reference text found for ANDA {anda_num}")
-            else:
-                logger.error(f"Failed to extract text from PDF for ANDA {anda_num}")
-                company_references[anda_num] = None
-                
-        except Exception as e:
-            logger.error(f"Error processing ANDA {anda_num}: {str(e)}")
-            company_references[anda_num] = None
-        
-        # Add delay to avoid overwhelming the server
-        time.sleep(1)
-    
-    return company_references
+    batch_extractor = BatchPDFExtractor(rate_limit_delay=1.0)
+    return batch_extractor.extract_companies_from_andas(anda_pdf_urls)
 
 
 def calculate_text_similarity(company_name: str, reference_text: str) -> float:
@@ -358,6 +346,13 @@ def validate_company_matches(
     validated_df = pd.DataFrame(validated_matches) if validated_matches else pd.DataFrame()
     rejected_df = pd.DataFrame(rejected_matches) if rejected_matches else pd.DataFrame()
     
+    # DEBUG: Check what columns are in the validated matches
+    if not validated_df.empty:
+        print(f"\n🔍 DEBUG: Validated matches columns: {validated_df.columns.tolist()}")
+        print(f"   Has ANDA_Approval_Date_Date: {'ANDA_Approval_Date_Date' in validated_df.columns}")
+        if 'ANDA_Approval_Date_Date' in validated_df.columns:
+            print(f"   Sample ANDA dates: {validated_df['ANDA_Approval_Date_Date'].head(3).tolist()}")
+    
     return validated_df, rejected_df
 
 
@@ -403,10 +398,26 @@ def nda_anda_company_validation(
         ]
         logger.info(f"Limited processing to {len(limited_andas)} ANDAs for testing")
     
-    # Step 4: Extract ANDA PDF URLs
-    logger.info("Constructing ANDA PDF URLs...")
-    anda_pdf_urls = extract_anda_pdf_urls(anda_matches_to_process, test_urls=True)
-    logger.info(f"Found {len(anda_pdf_urls)} working ANDA PDF URLs")
+    # Step 4: Extract ANDA PDF URLs using FDA API
+    logger.info("Querying FDA API for ANDA approval letter URLs...")
+    
+    # Create simple ANDA objects for API querying
+    class SimpleANDA:
+        def __init__(self, anda_num):
+            self.anda_num = str(anda_num)
+        def get_anda_number(self):
+            return self.anda_num
+    
+    unique_anda_numbers = anda_matches_to_process['ANDA_Appl_No'].dropna().unique()
+    anda_objects = [SimpleANDA(anda_num) for anda_num in unique_anda_numbers]
+    
+    # Use DrugsAPI to get PDF URLs
+    anda_pdf_urls = get_api_submissions(anda_objects)
+    
+    # Filter out None values
+    anda_pdf_urls = {k: v for k, v in anda_pdf_urls.items() if v is not None}
+    
+    logger.info(f"Found {len(anda_pdf_urls)} ANDA PDF URLs from FDA API")
     
     # Step 5: Extract company references from PDFs
     logger.info("Extracting company references from ANDA approval letters...")
@@ -414,6 +425,12 @@ def nda_anda_company_validation(
     
     # Step 6: Validate matches using 90% similarity threshold
     logger.info("Validating NDA-ANDA matches based on company references...")
+    
+    # DEBUG: Check input to validation
+    print(f"\n🔍 DEBUG: Input to validate_company_matches:")
+    print(f"   anda_matches_to_process columns: {anda_matches_to_process.columns.tolist()}")
+    print(f"   Has ANDA_Approval_Date_Date: {'ANDA_Approval_Date_Date' in anda_matches_to_process.columns}")
+    
     validated_matches, rejected_matches = validate_company_matches(
         nda_companies, company_references, anda_matches_to_process, similarity_threshold=0.9
     )
@@ -628,87 +645,13 @@ def calculate_nda_monopoly_times_with_validation(
     
     nda_monopoly["Actual_Monopoly_Years"] = nda_monopoly["Actual_Monopoly_Days"] / 365.25
     
-    # Compare to granted monopoly period
-    def shorter_than_granted(row):
-        actual = row["Actual_Monopoly_Years"]
-        granted = row["NDA_MMT_Years"]
-        if pd.isna(actual) or pd.isna(granted):
-            return np.nan
-        return bool(actual < granted)
-    
-    nda_monopoly["Monopoly_Shorter_Than_Granted"] = nda_monopoly.apply(shorter_than_granted, axis=1)
-    
-    return nda_monopoly
-    """Calculate monopoly times at the NDA level (one calculation per NDA)."""
-    # Get NDA-level data
-    nda_summary = match_data.nda_summary.copy()
-    
-    # Filter matches to only include ANDAs approved after NDA approval
-    valid_matches = match_data.anda_matches.copy()
-    valid_matches = valid_matches.dropna(subset=["ANDA_Approval_Date_Date"])
-    
-    # Merge to get NDA approval dates for comparison
-    valid_matches = valid_matches.merge(
-        nda_summary[["NDA_Appl_No", "NDA_Approval_Date_Date"]], 
-        on="NDA_Appl_No", 
-        how="left"
-    )
-    
-    # Filter out ANDAs approved before or on the same day as NDA
-    valid_matches = valid_matches[
-        valid_matches["ANDA_Approval_Date_Date"] > valid_matches["NDA_Approval_Date_Date"]
-    ]
-    
-    if valid_matches.empty:
-        # No valid matches, return NDAs with no monopoly end dates
-        nda_monopoly = nda_summary.copy()
-        nda_monopoly["Earliest_ANDA_Date"] = pd.NaT
-        nda_monopoly["Actual_Monopoly_Days"] = np.nan
-        nda_monopoly["Actual_Monopoly_Years"] = np.nan
-        nda_monopoly["Monopoly_Shorter_Than_Granted"] = np.nan
-        nda_monopoly["Num_Matching_ANDAs"] = 0
-        return nda_monopoly
-    
-    # Find earliest ANDA per NDA
-    earliest_anda_per_nda = (
-        valid_matches.groupby("NDA_Appl_No")["ANDA_Approval_Date_Date"]
-        .min()
-        .rename("Earliest_ANDA_Date")
-        .reset_index()
-    )
-    
-    # Count matching ANDAs per NDA and get list of ANDA numbers
-    anda_details = (
-        valid_matches.groupby("NDA_Appl_No")
-        .agg({
-            "ANDA_Appl_No": [
-                lambda x: x.nunique(),  # Count unique ANDAs
-                lambda x: " | ".join(sorted(set(x.astype(str))))  # List of ANDA numbers
-            ]
-        })
-        .reset_index()
-    )
-    
-    # Flatten column names
-    anda_details.columns = ["NDA_Appl_No", "Num_Matching_ANDAs", "Matching_ANDA_List"]
-    
-    # Merge back to NDA summary
-    nda_monopoly = (
-        nda_summary
-        .merge(earliest_anda_per_nda, on="NDA_Appl_No", how="left")
-        .merge(anda_details, on="NDA_Appl_No", how="left")
-    )
-    
-    # Fill missing values
-    nda_monopoly["Num_Matching_ANDAs"] = nda_monopoly["Num_Matching_ANDAs"].fillna(0).astype(int)
-    nda_monopoly["Matching_ANDA_List"] = nda_monopoly["Matching_ANDA_List"].fillna("")
-    
-    # Calculate monopoly times
-    nda_monopoly["Actual_Monopoly_Days"] = (
-        nda_monopoly["Earliest_ANDA_Date"] - nda_monopoly["NDA_Approval_Date_Date"]
-    ).dt.days
-    
-    nda_monopoly["Actual_Monopoly_Years"] = nda_monopoly["Actual_Monopoly_Days"] / 365.25
+    # DEBUG: Print sample calculations
+    print("\n🔍 DEBUG: Monopoly time calculations (first 5 NDAs with matches):")
+    debug_cols = ['NDA_Appl_No', 'NDA_Approval_Date_Date', 'Earliest_ANDA_Date', 
+                  'Actual_Monopoly_Days', 'Actual_Monopoly_Years', 'NDA_MMT_Years']
+    available_debug_cols = [col for col in debug_cols if col in nda_monopoly.columns]
+    print(nda_monopoly[nda_monopoly['Num_Matching_ANDAs'] > 0][available_debug_cols].head(5))
+    print()
     
     # Compare to granted monopoly period
     def shorter_than_granted(row):
