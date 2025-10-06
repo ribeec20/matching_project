@@ -83,12 +83,6 @@ def has_overlap(left: List[str], right: List[str]) -> bool:
     return bool(set(left).intersection(right))
 
 
-def te_compatible(val_a: object, val_b: object) -> bool:
-    token_a = None if pd.isna(val_a) else str(val_a).upper()
-    token_b = None if pd.isna(val_b) else str(val_b).upper()
-    return (token_a is None) or (token_b is None) or (token_a == token_b)
-
-
 def substr_contains(text: object, pattern: object) -> bool:
     if pd.isna(text) or pd.isna(pattern):
         return False
@@ -103,14 +97,6 @@ def coalesce_str(value_a: object, value_b: object) -> object:
     if isinstance(b, pd.Timestamp):
         b = b.strftime("%Y-%m-%d")
     return a if a not in (None, "") else b
-
-
-def shorter_than_granted(row: pd.Series) -> float | bool | np.bool_ | np.ndarray:
-    actual_years = row["Actual_Monopoly_Years_Prod"]
-    granted_years = row["NDA_MMT_Years"]
-    if pd.isna(actual_years) or pd.isna(granted_years):
-        return np.nan
-    return bool(actual_years < granted_years)
 
 
 def _extract_nda_and_anda_data(orange_book_clean: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:

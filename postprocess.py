@@ -34,36 +34,6 @@ def get_api_submissions(anda_objects: List) -> Dict[str, Optional[str]]:
     return api_client.get_multiple_anda_pdfs(anda_objects, rate_limit_delay=0.5)
 
 
-def get_nda_companies_from_orange_book(nda_numbers: List[str], orange_book_clean: pd.DataFrame) -> Dict[str, List[str]]:
-    """Get company names for each NDA number from Orange Book data.
-    
-    Args:
-        nda_numbers: List of NDA application numbers
-        orange_book_clean: Orange Book DataFrame
-        
-    Returns:
-        Dictionary mapping NDA number to list of company names
-    """
-    nda_companies = {}
-    
-    # Filter Orange Book for NDAs only
-    nda_records = orange_book_clean[orange_book_clean['Appl_Type'] == 'N'].copy()
-    
-    for nda_num in nda_numbers:
-        # Find all companies for this NDA
-        nda_rows = nda_records[nda_records['Appl_No'] == nda_num]
-        
-        if not nda_rows.empty:
-            # Get unique company names (handle potential nulls)
-            companies = nda_rows['Applicant'].dropna().unique().tolist()
-            nda_companies[nda_num] = companies
-        else:
-            nda_companies[nda_num] = []
-            logger.warning(f"No company found for NDA {nda_num} in Orange Book")
-    
-    return nda_companies
-
-
 def get_nda_companies_from_main_table(nda_numbers: List[str], main_table_clean: pd.DataFrame, orange_book_clean: pd.DataFrame) -> Dict[str, List[str]]:
     """Get company names for each NDA number, prioritizing NDAs from main table but getting companies from Orange Book.
     
@@ -102,94 +72,6 @@ def get_nda_companies_from_main_table(nda_numbers: List[str], main_table_clean: 
             nda_companies[nda_num] = []
     
     return nda_companies
-
-
-def find_working_anda_pdf_url(anda_num: str, year: int) -> Optional[str]:
-    """Try multiple URL patterns to find a working ANDA PDF URL.
-    
-    Looks for API responses containing 'http://www.accessdata.fda.gov' and '/appletter/'
-    to validate that we're getting proper FDA responses.
-    
-    Args:
-        anda_num: ANDA application number as string
-        year: Approval year
-        
-    Returns:
-        Working PDF URL or None if none found
-    """
-    import requests
-    
-    url_patterns = [
-        f"http://www.accessdata.fda.gov/drugsatfda_docs/appletter/{year}/{anda_num}ltr.pdf",
-        f"http://www.accessdata.fda.gov/drugsatfda_docs/appletter/{year}/{anda_num}s000ltr.pdf", 
-        f"http://www.accessdata.fda.gov/drugsatfda_docs/appletter/{year}/{anda_num}s000_ltr.pdf",
-        f"http://www.accessdata.fda.gov/drugsatfda_docs/appletter/{year}/{anda_num}Orig1s000ltr.pdf",
-        f"http://www.accessdata.fda.gov/drugsatfda_docs/appletter/{year}/{anda_num}orig1s000ltr.pdf",
-    ]
-    
-    for url in url_patterns:
-        try:
-            # Quick HEAD request to check if URL exists
-            response = requests.head(url, timeout=10)
-            
-            # Check that we got a successful response AND it's from FDA domain
-            if (response.status_code == 200 and 
-                'http://www.accessdata.fda.gov' in response.url and 
-                '/appletter/' in response.url):
-                logger.info(f"Found valid FDA URL for ANDA {anda_num}: {url}")
-                return url
-            elif response.status_code == 200:
-                # Log if we got a 200 but not from expected FDA domain
-                logger.warning(f"Got 200 response but URL doesn't match FDA pattern for ANDA {anda_num}: {response.url}")
-                
-        except Exception as e:
-            logger.debug(f"Error checking URL {url} for ANDA {anda_num}: {str(e)}")
-            continue
-    
-    logger.warning(f"No working FDA PDF URL found for ANDA {anda_num} in year {year}")
-    return None
-
-
-def extract_anda_pdf_urls(anda_matches: pd.DataFrame, test_urls: bool = True) -> Dict[str, str]:
-    """Extract PDF URLs for ANDA approval letters.
-    
-    Args:
-        anda_matches: DataFrame containing ANDA match information
-        test_urls: Whether to test URL patterns to find working links
-        
-    Returns:
-        Dictionary mapping ANDA number to PDF URL
-    """
-    anda_pdf_urls = {}
-    
-    # Extract unique ANDA numbers
-    anda_numbers = anda_matches['ANDA_Appl_No'].dropna().unique()
-    
-    for anda_num in anda_numbers:
-        # Convert to string and ensure proper formatting
-        anda_str = str(anda_num).strip()
-        
-        # Try to get approval year from the data if available
-        anda_row = anda_matches[anda_matches['ANDA_Appl_No'] == anda_num].iloc[0]
-        approval_date = anda_row.get('ANDA_Approval_Date_Date')
-        
-        if pd.notna(approval_date) and hasattr(approval_date, 'year'):
-            year = approval_date.year
-            
-            if test_urls:
-                # Try to find a working URL
-                working_url = find_working_anda_pdf_url(anda_str, year)
-                if working_url:
-                    anda_pdf_urls[anda_str] = working_url
-            else:
-                # Use default pattern without testing
-                pdf_url = f"http://www.accessdata.fda.gov/drugsatfda_docs/appletter/{year}/{anda_str}ltr.pdf"
-                anda_pdf_urls[anda_str] = pdf_url
-                
-        else:
-            logger.warning(f"No approval date found for ANDA {anda_str}, cannot construct PDF URL")
-    
-    return anda_pdf_urls
 
 
 def extract_company_references_from_pdfs(anda_pdf_urls: Dict[str, str]) -> Dict[str, Optional[str]]:
@@ -498,26 +380,6 @@ def compute_date_summary(date_check: pd.DataFrame) -> pd.DataFrame:
             "p90_diff": [p90_diff],
         }
     )
-
-
-def find_products_without_anda(product_summary: pd.DataFrame) -> pd.DataFrame:
-    """Return NDA products that do not have a matched ANDA."""
-    andas_count = product_summary.get("Num_Therapeutic_ANDAs_Prod")
-    if andas_count is None:
-        andas_count = pd.Series(np.nan, index=product_summary.index)
-
-    mask = andas_count.isna() | (andas_count == 0)
-    columns = [
-        "NDA_Appl_No",
-        "NDA_Product_No",
-        "NDA_Ingredient",
-        "NDA_DF",
-        "NDA_Route",
-        "NDA_Strength_Specific",
-        "NDA_Approval_Date",
-    ]
-    available_columns = [col for col in columns if col in product_summary.columns]
-    return product_summary.loc[mask, available_columns].copy()
 
 
 def create_validated_match_data(
